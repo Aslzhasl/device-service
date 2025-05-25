@@ -33,59 +33,56 @@ func (r *DeviceRepository) CreateDevice(ctx context.Context, d *model.Device) er
 	return stmt.GetContext(ctx, d, d)
 }
 
-func (r *DeviceRepository) GetAllDevices(ctx context.Context, filter map[string]interface{}) ([]model.Device, error) {
-	// 1. Redis Cache Key Generation
-	filterJSON, _ := json.Marshal(filter)
+func (r *DeviceRepository) GetAllDevices(ctx context.Context, f model.DeviceFilter) ([]model.Device, error) {
+	// 1. Build a stable Redis key from the filter
+	filterJSON, _ := json.Marshal(f)
 	cacheKey := fmt.Sprintf("devices:%x", sha1.Sum(filterJSON))
 
-	// 2. Check Redis Cache
-	cached, err := config.RedisClient.Get(ctx, cacheKey).Result()
-	if err == nil {
-		var cachedDevices []model.Device
-		if err := json.Unmarshal([]byte(cached), &cachedDevices); err == nil {
-			return cachedDevices, nil
+	// 2. Try cache
+	if cached, err := config.RedisClient.Get(ctx, cacheKey).Result(); err == nil {
+		var devices []model.Device
+		if err := json.Unmarshal([]byte(cached), &devices); err == nil {
+			return devices, nil
 		}
 	}
 
+	// 3. Build dynamic SQL
 	baseQuery := `SELECT * FROM devices WHERE 1=1`
 	args := []interface{}{}
 	idx := 1
 
-	// флтр
-	if category, ok := filter["category"].(string); ok && category != "" {
+	if f.Category != "" {
 		baseQuery += fmt.Sprintf(" AND category = $%d", idx)
-		args = append(args, category)
+		args = append(args, f.Category)
 		idx++
 	}
-	if available, ok := filter["available"].(*bool); ok && available != nil {
+	if f.Available != nil {
 		baseQuery += fmt.Sprintf(" AND available = $%d", idx)
-		args = append(args, *available)
+		args = append(args, *f.Available)
 		idx++
 	}
-	if minPrice, ok := filter["min_price"].(float64); ok {
+	if f.MinPrice != nil {
 		baseQuery += fmt.Sprintf(" AND price_per_day >= $%d", idx)
-		args = append(args, minPrice)
+		args = append(args, *f.MinPrice)
 		idx++
 	}
-	if maxPrice, ok := filter["max_price"].(float64); ok {
+	if f.MaxPrice != nil {
 		baseQuery += fmt.Sprintf(" AND price_per_day <= $%d", idx)
-		args = append(args, maxPrice)
+		args = append(args, *f.MaxPrice)
 		idx++
 	}
-	if city, ok := filter["city"].(string); ok && city != "" {
+	if f.City != "" {
 		baseQuery += fmt.Sprintf(" AND city ILIKE $%d", idx)
-		args = append(args, city)
+		args = append(args, f.City)
 		idx++
 	}
-	if region, ok := filter["region"].(string); ok && region != "" {
+	if f.Region != "" {
 		baseQuery += fmt.Sprintf(" AND region ILIKE $%d", idx)
-		args = append(args, region)
+		args = append(args, f.Region)
 		idx++
 	}
 
-	//сорт
-	sort := filter["sort"].(string)
-	switch sort {
+	switch f.Sort {
 	case "price_asc":
 		baseQuery += " ORDER BY price_per_day ASC"
 	case "price_desc":
@@ -94,23 +91,20 @@ func (r *DeviceRepository) GetAllDevices(ctx context.Context, filter map[string]
 		baseQuery += " ORDER BY created_at DESC"
 	}
 
-	// пагинация
-	limit := filter["limit"].(int)
-	page := filter["page"].(int)
-	offset := (page - 1) * limit
+	offset := (f.Page - 1) * f.Limit
 	baseQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
-	args = append(args, limit, offset)
-	fmt.Println("🔍 SQL:", baseQuery)
-	fmt.Println("📦 Args:", args)
+	args = append(args, f.Limit, offset)
+
+	// 4. Execute the query
 	var devices []model.Device
-	err = r.DB.SelectContext(ctx, &devices, baseQuery, args...)
-	if err != nil {
+	if err := r.DB.SelectContext(ctx, &devices, baseQuery, args...); err != nil {
 		return nil, err
 	}
 
-	// сохранение в редис
-	payload, _ := json.Marshal(devices)
-	_ = config.RedisClient.Set(ctx, cacheKey, payload, 60*time.Second).Err()
+	// 5. Cache the result for 60s
+	if payload, err := json.Marshal(devices); err == nil {
+		_ = config.RedisClient.Set(ctx, cacheKey, payload, 60*time.Second).Err()
+	}
 
 	return devices, nil
 }
@@ -181,4 +175,43 @@ func (r *DeviceRepository) UpdateAvailability(ctx context.Context, deviceID, own
 	}
 
 	return nil
+}
+
+// GetCategories returns all distinct categories
+func (r *DeviceRepository) GetCategories(ctx context.Context) ([]string, error) {
+	var cats []string
+	err := r.DB.SelectContext(ctx, &cats,
+		`SELECT DISTINCT category FROM devices WHERE category <> '' ORDER BY category`)
+	return cats, err
+}
+
+// GetCities returns all distinct non-null cities
+func (r *DeviceRepository) GetCities(ctx context.Context) ([]string, error) {
+	var cities []string
+	err := r.DB.SelectContext(ctx, &cities,
+		`SELECT DISTINCT city FROM devices WHERE city IS NOT NULL AND city <> '' ORDER BY city`)
+	return cities, err
+}
+
+// GetRegions returns all distinct non-null regions
+func (r *DeviceRepository) GetRegions(ctx context.Context) ([]string, error) {
+	var regions []string
+	err := r.DB.SelectContext(ctx, &regions,
+		`SELECT DISTINCT region FROM devices WHERE region IS NOT NULL AND region <> '' ORDER BY region`)
+	return regions, err
+}
+
+// GetTrendingDevices returns the top N devices by # of favorites
+func (r *DeviceRepository) GetTrendingDevices(ctx context.Context, limit int) ([]model.Device, error) {
+	var devices []model.Device
+	query := `
+      SELECT d.*
+      FROM devices d
+      LEFT JOIN favorites f ON f.device_id = d.id
+      GROUP BY d.id
+      ORDER BY COUNT(f.device_id) DESC
+      LIMIT $1
+    `
+	err := r.DB.SelectContext(ctx, &devices, query, limit)
+	return devices, err
 }

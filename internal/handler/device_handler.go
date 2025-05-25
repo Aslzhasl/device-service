@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"log"
 	"net/http"
-	"strconv"
 )
 
 func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository) {
@@ -22,7 +22,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 		}
 
 		// TEMPORARY — replace with real JWT extraction later
-		device.OwnerID = middleware.GetUserID(c)
+		device.OwnerID, _ = middleware.GetUserID(c)
 
 		err := repo.CreateDevice(c.Request.Context(), &device)
 		if err != nil {
@@ -33,53 +33,14 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 		c.JSON(http.StatusCreated, device)
 	})
 	r.GET("/devices", func(c *gin.Context) {
-		// Parse query params
-		category := c.Query("category")
-		availableStr := c.Query("available")
-		minPriceStr := c.Query("min_price")
-		maxPriceStr := c.Query("max_price")
-		sort := c.DefaultQuery("sort", "recent")
-		limitStr := c.DefaultQuery("limit", "10")
-		pageStr := c.DefaultQuery("page", "1")
-		city := c.Query("city")
-		region := c.Query("region")
-
-		// 🔍 DEBUG:
-		fmt.Printf("🔎 Incoming filters — category=%q, available=%q, min_price=%q, max_price=%q, city=%q, region=%q\n",
-			category, availableStr, minPriceStr, maxPriceStr, city, region)
-		// Convert types
-		var available *bool
-		if availableStr == "true" {
-			v := true
-			available = &v
-		} else if availableStr == "false" {
-			v := false
-			available = &v
-		}
-
-		minPrice, _ := strconv.ParseFloat(minPriceStr, 64)
-		maxPrice, _ := strconv.ParseFloat(maxPriceStr, 64)
-		limit, _ := strconv.Atoi(limitStr)
-		page, _ := strconv.Atoi(pageStr)
-
-		filter := map[string]interface{}{
-			"category":  category,
-			"available": available,
-			"min_price": minPrice,
-			"max_price": maxPrice,
-			"sort":      sort,
-			"limit":     limit,
-			"page":      page,
-			"city":      city,
-			"region":    region,
-		}
+		filter := model.ParseDeviceFilter(c)
+		fmt.Printf("🔎 Filter: %+v\n", filter) // debug
 
 		devices, err := repo.GetAllDevices(c.Request.Context(), filter)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
 		c.JSON(http.StatusOK, devices)
 	})
 
@@ -96,7 +57,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 	})
 	r.PUT("/devices/:id", func(c *gin.Context) {
 		id := c.Param("id")
-		userID := middleware.GetUserID(c)
+		userID, _ := middleware.GetUserID(c)
 
 		var device model.Device
 		if err := c.ShouldBindJSON(&device); err != nil {
@@ -121,7 +82,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 	})
 	r.DELETE("/devices/:id", func(c *gin.Context) {
 		id := c.Param("id")
-		userID := middleware.GetUserID(c)
+		userID, _ := middleware.GetUserID(c)
 
 		err := repo.DeleteDevice(c.Request.Context(), id, userID)
 		if err != nil {
@@ -141,7 +102,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 
 	r.PATCH("/devices/:id/availability", func(c *gin.Context) {
 		id := c.Param("id")
-		userID := middleware.GetUserID(c)
+		userID, _ := middleware.GetUserID(c)
 
 		var input AvailabilityUpdate
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -160,6 +121,79 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "Availability updated"})
+	})
+	//
+	////PHOTO
+	//r.GET("/upload-url", func(c *gin.Context) {
+	//	fileName := c.Query("fileName")
+	//	if fileName == "" {
+	//		c.JSON(400, gin.H{"error": "fileName query param required"})
+	//		return
+	//	}
+	//	uploadURL, publicURL, err := config.GenerateUploadURL(fileName)
+	//	if err != nil {
+	//		c.JSON(500, gin.H{"error": err.Error()})
+	//		return
+	//	}
+	//	c.JSON(200, gin.H{
+	//		"uploadUrl": uploadURL,
+	//		"publicUrl": publicURL,
+	//	})
+	//})
+
+}
+func RegisterFavoriteRoutes(r *gin.RouterGroup, favRepo *repository.FavoriteRepository) {
+	// Add to favorites
+	r.POST("/devices/:id/favorite", func(c *gin.Context) {
+		// 1) Extract the userID and check it exists
+		userID, ok := middleware.GetUserID(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+		deviceID := c.Param("id")
+
+		// 2) Debug log so you see what’s happening
+		log.Printf("➕ AddFavorite called by user=%s for device=%s", userID, deviceID)
+
+		// 3) Insert into DB
+		if err := favRepo.AddFavorite(c.Request.Context(), userID, deviceID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	r.GET("/devices/favorites", func(c *gin.Context) {
+		userID, ok := middleware.GetUserID(c)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
+
+		log.Printf("🔎 GetFavorites called by user=%s", userID)
+		devices, err := favRepo.GetFavorites(c.Request.Context(), userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, devices)
+	})
+
+	// Remove from favorites
+	r.DELETE("/devices/:id/favorite", func(c *gin.Context) {
+		userID, _ := middleware.GetUserID(c)
+		deviceID := c.Param("id")
+
+		if err := favRepo.RemoveFavorite(c.Request.Context(), userID, deviceID); err != nil {
+			if err.Error() == "not found" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Favorite not found"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		c.Status(http.StatusNoContent)
 	})
 
 }

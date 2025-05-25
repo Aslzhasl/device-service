@@ -1,42 +1,67 @@
 package main
 
 import (
+	"log"
+	"os"
+
 	"device-service/config"
 	"device-service/internal/handler"
 	"device-service/internal/middleware"
 	"device-service/internal/repository"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"log"
-	"os"
 )
 
 func main() {
+	// 1) Load environment variables from .env
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("❌ Error loading .env file")
+		log.Println("⚠️  No .env file found, relying on real env vars")
 	}
+
+	// 2) Connect to Postgres
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Fatal("❌ DATABASE_URL not set")
+		log.Fatal("DATABASE_URL env var is required")
 	}
-
 	db, err := sqlx.Connect("postgres", dbURL)
 	if err != nil {
-		log.Fatalf("❌ Failed to connect to DB: %v", err)
+		log.Fatalf("❌ Failed to connect to Postgres: %v", err)
 	}
 
-	r := gin.Default()
+	// 3) Initialize Redis
 	config.InitRedis()
-	repo := repository.NewDeviceRepository(db)
 
+	// 4) Initialize Firebase (Storage)
+	config.InitFirebase()
+
+	// 5) Create repositories
+	deviceRepo := repository.NewDeviceRepository(db)
+	favRepo := repository.NewFavoriteRepository(db)
+
+	// 6) Set up Gin
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+
+	// 7) Mount your API group with JWT auth
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuthMiddleware())
 
-	handler.RegisterDeviceRoutes(api, repo)
+	// 8) Register routes
+	handler.RegisterDeviceRoutes(api, deviceRepo)
+	handler.RegisterFavoriteRoutes(api, favRepo)
+	handler.RegisterUploadURLRoute(api) // if you added upload-url
+	handler.RegisterMetaRoutes(api, deviceRepo)
 
-	if err := r.Run(":8081"); err != nil {
-		log.Fatal(err)
+	// 9) Start HTTP server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8081" // default port
+	}
+	log.Printf("🚀 Starting server on :%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("Server error: %v", err)
 	}
 }

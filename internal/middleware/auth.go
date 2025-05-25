@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -10,11 +11,17 @@ import (
 )
 
 const (
+	// Context key under which we store the user’s UUID
 	UserIDKey = "userID"
-	JwtSecret = "verylongrandomstringyouwritehere-and-never-commit-an-obvious-password" // TODO: Move to env var in prod
+
+	// Fallback secret — in prod you should ALWAYS set JWT_SECRET instead
+	JwtSecret = "verylongrandomstringyouwritehere-and-never-commit-an-obvious-password"
 )
 
-// Middleware to extract userID from JWT token
+// JWT_SECRET env var name
+const EnvJWTSecret = "JWT_SECRET"
+
+// JWTAuthMiddleware validates the token and pulls the "sub" claim into context.
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -25,36 +32,50 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 
-		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		// Load secret from env or fallback
+		secret := []byte(os.Getenv(EnvJWTSecret))
+		if len(secret) == 0 {
+			secret = []byte(JwtSecret)
+		}
+
+		// Parse & validate token
+		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, errors.New("unexpected signing method")
 			}
-			return []byte(JwtSecret), nil
+			return secret, nil
 		})
-
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			return
 		}
 
-		userID, ok := claims["sub"].(string)
+		// Extract claims and pull out the subject
+		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user_id not found in token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
 			return
 		}
 
-		// Add userID to context
-		c.Set(UserIDKey, userID)
+		sub, ok := claims["sub"].(string)
+		if !ok || sub == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "sub claim not found in token"})
+			return
+		}
 
+		// Store the user's UUID in context
+		c.Set(UserIDKey, sub)
 		c.Next()
 	}
 }
 
-// Helper to extract userID from context
-func GetUserID(c *gin.Context) string {
-	if userID, exists := c.Get(UserIDKey); exists {
-		return userID.(string)
+// GetUserID retrieves the userID (the JWT "sub" claim) from context.
+// Returns the ID string and a boolean if it was present.
+func GetUserID(c *gin.Context) (string, bool) {
+	v, exists := c.Get(UserIDKey)
+	if !exists {
+		return "", false
 	}
-	return ""
+	userID, ok := v.(string)
+	return userID, ok
 }
