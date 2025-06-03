@@ -2,23 +2,29 @@ package config
 
 import (
 	"context"
-	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var RedisClient *redis.Client
 
 func InitRedis() {
-	RedisClient = redis.NewClient(&redis.Options{
-		Addr:     os.Getenv("REDIS_ADDR"), // e.g. localhost:6379
-		Password: "",                      // no password by default
-		DB:       0,
-	})
-
-	if err := RedisClient.Ping(context.Background()).Err(); err != nil {
-		log.Fatalf("❌ Redis connection failed: %v", err)
+	// 1) Подгрузили URL (который у вас уже в REDIS_URL)
+	redURL := os.Getenv("REDIS_URL")
+	opt, err := redis.ParseURL(redURL)
+	if err != nil {
+		log.Fatalf("🔴 redis parse url failed: %v", err)
 	}
 
-	log.Println("✅ Connected to Redis")
+	// 2) Создали клиента по этому URL (с TLS автоматически)
+	RedisClient = redis.NewClient(opt)
+
+	// 3) Проверили соединение
+	if err := RedisClient.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("🔴 redis connection failed: %v", err)
+	}
+
+	log.Println("✅ Redis connected via URL")
 }

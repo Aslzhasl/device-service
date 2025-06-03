@@ -32,6 +32,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 
 		c.JSON(http.StatusCreated, device)
 	})
+
 	r.GET("/devices", func(c *gin.Context) {
 		filter := model.ParseDeviceFilter(c)
 		fmt.Printf("🔎 Filter: %+v\n", filter) // debug
@@ -122,6 +123,17 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 
 		c.JSON(http.StatusOK, gin.H{"message": "Availability updated"})
 	})
+	r.GET("/devices/:id/availability", func(c *gin.Context) {
+		deviceID := c.Param("id")
+		device, err := repo.GetDeviceByID(c.Request.Context(), deviceID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"available": device.Available,
+		})
+	})
 	//
 	////PHOTO
 	//r.GET("/upload-url", func(c *gin.Context) {
@@ -164,7 +176,7 @@ func RegisterFavoriteRoutes(r *gin.RouterGroup, favRepo *repository.FavoriteRepo
 		c.Status(http.StatusNoContent)
 	})
 
-	r.GET("/devices/favorites", func(c *gin.Context) {
+	r.GET("/devices/favorite", func(c *gin.Context) {
 		userID, ok := middleware.GetUserID(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})

@@ -11,6 +11,6 @@ type Device struct {
 	OwnerID     string  `db:"owner_id" json:"owner_id"`
 	City        string  `db:"city" json:"city"`
 	Region      string  `db:"region" json:"region"`
-	CreatedAt   string  `db:"created_at" json:"created_at"`
-	UpdatedAt   string  `db:"updated_at" json:"updated_at"`
+	CreatedAt   *string `db:"created_at" json:"created_at"`
+	UpdatedAt   *string `db:"updated_at" json:"updated_at"`
 }

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
 
@@ -16,12 +19,29 @@ import (
 )
 
 func main() {
-	// 1) Load environment variables from .env
 	if err := godotenv.Load(); err != nil {
 		log.Println("⚠️  No .env file found, relying on real env vars")
 	}
 
-	// 2) Connect to Postgres
+	// 1) Проверяем REDIS_URL
+	redisUrl := os.Getenv("REDIS_URL")
+	if redisUrl == "" {
+		log.Fatal("REDIS_URL env var is required")
+	}
+	fmt.Println("REDIS_URL:", redisUrl)
+
+	opt, err := redis.ParseURL(redisUrl)
+	if err != nil {
+		log.Fatalf("🙈 redis.ParseURL failed: %v", err)
+	}
+	client := redis.NewClient(opt)
+
+	ctx := context.Background()
+	if err := client.Set(ctx, "testkey", "testvalue", 0).Err(); err != nil {
+		log.Fatalf("❌ Redis SET failed: %v", err)
+	}
+
+	// 2) Подключаемся к Postgres
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL env var is required")
@@ -30,37 +50,34 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to Postgres: %v", err)
 	}
+	log.Println("✅ Connected to Postgres")
 
-	// 3) Initialize Redis
+	// 3) Инициализируем Redis и Firebase
 	config.InitRedis()
-
-	// 4) Initialize Firebase (Storage)
 	config.InitFirebase()
 
-	// 5) Create repositories
+	// 4) Создаем репозитории/сервисы/хендлеры
 	deviceRepo := repository.NewDeviceRepository(db)
 	favRepo := repository.NewFavoriteRepository(db)
 
-	// 6) Set up Gin
+	// 5) Настраиваем Gin
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// 7) Mount your API group with JWT auth
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuthMiddleware())
 
-	// 8) Register routes
 	handler.RegisterDeviceRoutes(api, deviceRepo)
 	handler.RegisterFavoriteRoutes(api, favRepo)
-	handler.RegisterUploadURLRoute(api) // if you added upload-url
+	handler.RegisterUploadURLRoute(api)
 	handler.RegisterMetaRoutes(api, deviceRepo)
 
-	// 9) Start HTTP server
+	// 6) Запуск HTTP-сервера на PORT (по умолчанию 8080)
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8081" // default port
+		port = "8080"
 	}
-	log.Printf("🚀 Starting server on :%s", port)
+	log.Printf("🚀 Starting server on :%s\n", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

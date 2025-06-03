@@ -22,7 +22,7 @@ func NewDeviceRepository(db *sqlx.DB) *DeviceRepository {
 
 func (r *DeviceRepository) CreateDevice(ctx context.Context, d *model.Device) error {
 	query := `
-    INSERT INTO devices (name, description, category, price_per_day, available, image_url, owner_id, city, region)
+    INSERT INTO devices ( name, description, category, price_per_day, available, image_url, owner_id, city, region)
     VALUES (:name, :description, :category, :price_per_day, :available, :image_url, :owner_id, :city, :region)
     RETURNING id, created_at, updated_at
     `
@@ -116,6 +116,7 @@ func (r *DeviceRepository) GetDeviceByID(ctx context.Context, id string) (*model
 	}
 	return &device, nil
 }
+
 func (r *DeviceRepository) UpdateDevice(ctx context.Context, device *model.Device) error {
 	query := `
         UPDATE devices 
