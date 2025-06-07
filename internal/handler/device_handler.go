@@ -1,3 +1,5 @@
+// internal/handler/device_handler.go
+
 package handler
 
 import (
@@ -6,36 +8,41 @@ import (
 	"device-service/internal/model"
 	"device-service/internal/repository"
 	"errors"
-	"fmt"
 	"github.com/gin-gonic/gin"
-	"log"
 	"net/http"
 )
 
+// RegisterDeviceRoutes регистрирует маршруты для CRUD операций над устройствами.
+// Ожидается, что поле image_url передаётся уже готовым (публичным) URL из Firebase Storage.
 func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository) {
+	// POST /api/devices — создаёт новое устройство
 	r.POST("/devices", func(c *gin.Context) {
 		var device model.Device
 
+		// 1) Считываем JSON из тела
 		if err := c.BindJSON(&device); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
 
-		// TEMPORARY — replace with real JWT extraction later
-		device.OwnerID, _ = middleware.GetUserID(c)
+		// 2) Получаем owner_id из JWT
+		userID, _ := middleware.GetUserID(c)
+		device.OwnerID = userID
 
+		// 3) Создаём устройство в БД (включая поле ImageURL)
 		err := repo.CreateDevice(c.Request.Context(), &device)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
+		// 4) Возвращаем созданный объект (включая сгенерированные id, timestamps)
 		c.JSON(http.StatusCreated, device)
 	})
 
+	// GET /api/devices — список устройств (с фильтрами)
 	r.GET("/devices", func(c *gin.Context) {
 		filter := model.ParseDeviceFilter(c)
-		fmt.Printf("🔎 Filter: %+v\n", filter) // debug
 
 		devices, err := repo.GetAllDevices(c.Request.Context(), filter)
 		if err != nil {
@@ -45,6 +52,7 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 		c.JSON(http.StatusOK, devices)
 	})
 
+	// GET /api/devices/:id — получить устройство по ID
 	r.GET("/devices/:id", func(c *gin.Context) {
 		id := c.Param("id")
 
@@ -53,9 +61,10 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 			return
 		}
-
 		c.JSON(http.StatusOK, device)
 	})
+
+	// PUT /api/devices/:id — обновить устройство (в том числе можно обновить image_url)
 	r.PUT("/devices/:id", func(c *gin.Context) {
 		id := c.Param("id")
 		userID, _ := middleware.GetUserID(c)
@@ -81,6 +90,8 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 
 		c.JSON(http.StatusOK, gin.H{"message": "Device updated successfully"})
 	})
+
+	// DELETE /api/devices/:id — удалить устройство
 	r.DELETE("/devices/:id", func(c *gin.Context) {
 		id := c.Param("id")
 		userID, _ := middleware.GetUserID(c)
@@ -94,13 +105,13 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 			}
 			return
 		}
-
 		c.JSON(http.StatusOK, gin.H{"message": "Device deleted successfully"})
 	})
+
+	// PATCH /api/devices/:id/availability — обновить доступность
 	type AvailabilityUpdate struct {
 		Available bool `json:"available"`
 	}
-
 	r.PATCH("/devices/:id/availability", func(c *gin.Context) {
 		id := c.Param("id")
 		userID, _ := middleware.GetUserID(c)
@@ -120,92 +131,17 @@ func RegisterDeviceRoutes(r *gin.RouterGroup, repo *repository.DeviceRepository)
 			}
 			return
 		}
-
 		c.JSON(http.StatusOK, gin.H{"message": "Availability updated"})
 	})
+
+	// GET /api/devices/:id/availability — получить доступность
 	r.GET("/devices/:id/availability", func(c *gin.Context) {
 		deviceID := c.Param("id")
 		device, err := repo.GetDeviceByID(c.Request.Context(), deviceID)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"available": device.Available,
-		})
+		c.JSON(http.StatusOK, gin.H{"available": device.Available})
 	})
-	//
-	////PHOTO
-	//r.GET("/upload-url", func(c *gin.Context) {
-	//	fileName := c.Query("fileName")
-	//	if fileName == "" {
-	//		c.JSON(400, gin.H{"error": "fileName query param required"})
-	//		return
-	//	}
-	//	uploadURL, publicURL, err := config.GenerateUploadURL(fileName)
-	//	if err != nil {
-	//		c.JSON(500, gin.H{"error": err.Error()})
-	//		return
-	//	}
-	//	c.JSON(200, gin.H{
-	//		"uploadUrl": uploadURL,
-	//		"publicUrl": publicURL,
-	//	})
-	//})
-
-}
-func RegisterFavoriteRoutes(r *gin.RouterGroup, favRepo *repository.FavoriteRepository) {
-	// Add to favorites
-	r.POST("/devices/:id/favorite", func(c *gin.Context) {
-		// 1) Extract the userID and check it exists
-		userID, ok := middleware.GetUserID(c)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-			return
-		}
-		deviceID := c.Param("id")
-
-		// 2) Debug log so you see what’s happening
-		log.Printf("➕ AddFavorite called by user=%s for device=%s", userID, deviceID)
-
-		// 3) Insert into DB
-		if err := favRepo.AddFavorite(c.Request.Context(), userID, deviceID); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-
-	r.GET("/devices/favorite", func(c *gin.Context) {
-		userID, ok := middleware.GetUserID(c)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-			return
-		}
-
-		log.Printf("🔎 GetFavorites called by user=%s", userID)
-		devices, err := favRepo.GetFavorites(c.Request.Context(), userID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, devices)
-	})
-
-	// Remove from favorites
-	r.DELETE("/devices/:id/favorite", func(c *gin.Context) {
-		userID, _ := middleware.GetUserID(c)
-		deviceID := c.Param("id")
-
-		if err := favRepo.RemoveFavorite(c.Request.Context(), userID, deviceID); err != nil {
-			if err.Error() == "not found" {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Favorite not found"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			}
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-
 }

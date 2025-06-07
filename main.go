@@ -1,9 +1,10 @@
+// main.go
+
 package main
 
 import (
 	"context"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"log"
 	"os"
 
@@ -16,14 +17,16 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
+	// Загрузка .env (если есть)
 	if err := godotenv.Load(); err != nil {
 		log.Println("⚠️  No .env file found, relying on real env vars")
 	}
 
-	// 1) Проверяем REDIS_URL
+	// 1) Проверяем и инициализируем Redis
 	redisUrl := os.Getenv("REDIS_URL")
 	if redisUrl == "" {
 		log.Fatal("REDIS_URL env var is required")
@@ -40,6 +43,7 @@ func main() {
 	if err := client.Set(ctx, "testkey", "testvalue", 0).Err(); err != nil {
 		log.Fatalf("❌ Redis SET failed: %v", err)
 	}
+	log.Println("✅ Redis connected via URL")
 
 	// 2) Подключаемся к Postgres
 	dbURL := os.Getenv("DATABASE_URL")
@@ -52,33 +56,42 @@ func main() {
 	}
 	log.Println("✅ Connected to Postgres")
 
-	// 3) Инициализируем Redis и Firebase
-	config.InitRedis()
-	config.InitFirebase()
+	// 3) Инициализируем Firebase Storage (и Redis внутри config.InitRedis, если нужно)
+	config.InitRedis() // оставляем, чтобы config.RedisClient был готов
 
-	// 4) Создаем репозитории/сервисы/хендлеры
+	// 4) Создаём репозитории
 	deviceRepo := repository.NewDeviceRepository(db)
 	favRepo := repository.NewFavoriteRepository(db)
 
 	// 5) Настраиваем Gin
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
+	router := gin.Default()
 
-	api := r.Group("/api")
+	// 6) Группа /api + JWT middleware
+	api := router.Group("/api")
 	api.Use(middleware.JWTAuthMiddleware())
 
+	// 7) Регистрируем маршруты в нужном порядке
+
+	// 7.1. Загрузка файлов: POST /api/upload (multipart/form-data)
+	handler.RegisterUploadHandler(api)
+
+	// 7.2. CRUD для устройств: POST/GET/PUT/DELETE /api/devices
 	handler.RegisterDeviceRoutes(api, deviceRepo)
+
+	// 7.3. Маршруты для избранного (favorites)
 	handler.RegisterFavoriteRoutes(api, favRepo)
-	handler.RegisterUploadURLRoute(api)
+
+	// 7.4. Метаданные (категории, города, регионы, тренды)
 	handler.RegisterMetaRoutes(api, deviceRepo)
 
-	// 6) Запуск HTTP-сервера на PORT (по умолчанию 8080)
+	// 8) Запуск HTTP-сервера
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 	log.Printf("🚀 Starting server on :%s\n", port)
-	if err := r.Run(":" + port); err != nil {
+	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

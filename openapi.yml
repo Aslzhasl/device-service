@@ -1,11 +1,15 @@
-openapi: 3.0.1
+
+openapi: 3.0.0
 info:
   title: Device Service API
   version: "1.0"
+  description: API for managing devices and availability
 paths:
   /api/devices:
     post:
-      summary: Create a device
+      summary: Create a new device
+      tags:
+        - Devices
       requestBody:
         required: true
         content:
@@ -13,16 +17,20 @@ paths:
             schema:
               $ref: '#/components/schemas/Device'
       responses:
-        '201':
-          description: Device created
+        "201":
+          description: Created
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Device'
+        "400":
+          description: Invalid input
     get:
-      summary: Get all devices
+      summary: Get all devices with optional filters
+      tags:
+        - Devices
       responses:
-        '200':
+        "200":
           description: List of devices
           content:
             application/json:
@@ -32,31 +40,34 @@ paths:
                   $ref: '#/components/schemas/Device'
   /api/devices/{id}:
     get:
-      summary: Get device by id
+      summary: Get device by ID
+      tags:
+        - Devices
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
-        '200':
+        "200":
           description: Device found
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Device'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+        "404":
+          description: Device not found
     put:
-      summary: Update device
+      summary: Update device by ID
+      tags:
+        - Devices
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -64,179 +75,92 @@ paths:
             schema:
               $ref: '#/components/schemas/Device'
       responses:
-        '200':
-          description: Updated
+        "200":
+          description: Device updated
+        "403":
+          description: Not found or no permission
     delete:
-      summary: Delete device
+      summary: Delete device by ID
+      tags:
+        - Devices
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
-        '200':
-          description: Deleted
-        '403':
+        "200":
+          description: Device deleted
+        "403":
           description: Not found or no permission
   /api/devices/{id}/availability:
-    get:
-      summary: Get device availability
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Availability info
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  available: { type: boolean }
     patch:
       summary: Update device availability
+      tags:
+        - Devices
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                available:
-                  type: boolean
+              $ref: '#/components/schemas/AvailabilityUpdate'
       responses:
-        '200':
+        "200":
           description: Availability updated
-  /api/categories:
+        "403":
+          description: Not found or no permission
     get:
-      summary: Get all categories
-      responses:
-        '200':
-          description: List of categories
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-  /api/cities:
-    get:
-      summary: Get all cities
-      responses:
-        '200':
-          description: List of cities
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-  /api/regions:
-    get:
-      summary: Get all regions
-      responses:
-        '200':
-          description: List of regions
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-  /api/devices/trending:
-    get:
-      summary: Get trending devices
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema: { type: integer, default: 10 }
-      responses:
-        '200':
-          description: List of trending devices
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Device'
-  /api/devices/{id}/favorite:
-    post:
-      summary: Add device to favorites
+      summary: Get device availability
+      tags:
+        - Devices
       parameters:
         - name: id
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
-        '204':
-          description: Added to favorites
-        '401':
-          description: Not authenticated
-    delete:
-      summary: Remove device from favorites
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '204':
-          description: Removed from favorites
-        '404':
-          description: Not found
-  /api/devices/favorite:
-    get:
-      summary: Get user favorite devices
-      responses:
-        '200':
-          description: List of favorites
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Device'
-  /api/upload-url:
-    get:
-      summary: Get presigned upload URL for device image
-      parameters:
-        - name: fileName
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        '200':
-          description: Upload URL response
+        "200":
+          description: Device availability
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  uploadUrl: { type: string }
-                  publicUrl: { type: string }
-
+                  available:
+                    type: boolean
 components:
   schemas:
     Device:
       type: object
       properties:
-        id: { type: string }
-        name: { type: string }
-        description: { type: string }
-        category: { type: string }
-        price_per_day: { type: number }
-        available: { type: boolean }
-        image_url: { type: string }
-        owner_id: { type: string }
-        city: { type: string }
-        region: { type: string }
-        created_at: { type: string }
-        updated_at: { type: string }
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        city:
+          type: string
+        region:
+          type: string
+        image_url:
+          type: string
+        available:
+          type: boolean
+        owner_id:
+          type: string
+    AvailabilityUpdate:
+      type: object
+      properties:
+        available:
+          type: boolean
